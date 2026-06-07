@@ -102,6 +102,16 @@ CHECK_THRESHOLDS: dict = {
 _PREFS_THRESHOLDS: frozenset = frozenset({'triangles', 'ngons', 'poles'})
 
 
+def _get_prefs():
+    """Return MeshCheckPreferences or None."""
+    import bpy
+    addon_name = __name__.split(".")[0]
+    try:
+        return bpy.context.preferences.addons[addon_name].preferences
+    except Exception:
+        return None
+
+
 def _get_threshold(check: str, prefs=None) -> int:
     """Return the yellow/red dot threshold for *check*.
 
@@ -320,9 +330,8 @@ def _draw_delta_row(layout, label: str, was: int, now: int, *,
 
 
 def draw_coordinator_panel(layout, mc, context) -> None:
-    """Full Coordinator Mode view — checkpoint vs current validation delta."""
-    import json as _json
-    from .properties import _compute_current_results, _AC_CHECKPOINT_KEY
+    """Coordinator Mode — same checks as artist view, BLOCKER + WARNING only (no INFO)."""
+    from .properties import _AC_CHECKPOINT_KEY
 
     # ── Header ────────────────────────────────────────────────────────────────
     hdr = layout.row(align=True)
@@ -330,114 +339,53 @@ def draw_coordinator_panel(layout, mc, context) -> None:
              text="", icon="TRIA_LEFT", emboss=False)
     hdr.label(text="Coordinator Mode", icon="COMMUNITY")
 
-    # ── Checkpoint controls ───────────────────────────────────────────────────
-    raw = context.scene.get(_AC_CHECKPOINT_KEY)
-    ctrl = layout.row(align=True)
-    ctrl.operator("asset_checker.save_checkpoint",
-                  text="Save Checkpoint" if not raw else "Update Checkpoint",
-                  icon="BOOKMARKS")
-    ctrl.operator("asset_checker.load_checkpoint",
-                  text="", icon="IMPORT")
-    if raw:
-        ctrl.operator("asset_checker.clear_checkpoint",
-                      text="", icon="X", emboss=False)
-
-    layout.separator(factor=0.5)
-
-    if not raw:
-        info = layout.box()
-        info.label(text="No checkpoint saved yet.", icon="INFO")
-        col = info.column(align=True)
-        col.scale_y = 0.8
-        col.enabled = False
-        col.label(text="1. Run validation (Run STUKACH)")
-        col.label(text="2. Press  Save Checkpoint")
-        col.label(text="3. Artist iterates, you re-run")
-        col.label(text="4. Coordinator Mode shows delta")
-        return
-
-    # ── Parse checkpoint ──────────────────────────────────────────────────────
-    try:
-        cp = _json.loads(raw)
-    except Exception:
-        layout.label(text="Checkpoint data corrupted — clear and re-save", icon="ERROR")
-        return
-
-    # Timestamp badge — show source (live session vs loaded from JSON file)
-    ts = layout.row()
-    ts.scale_y = 0.75
-    ts.enabled = False
-    src_icon = "IMPORT" if cp.get("_source") == "report" else "BOOKMARKS"
-    src_hint = "  (from JSON report)" if cp.get("_source") == "report" else ""
-    ts.label(text=f"  Checkpoint: {cp.get('timestamp', '?')}{src_hint}",
-             icon=src_icon)
-
-    if not MC.objects:
-        warn = layout.box()
-        warn.label(text="Run validation to compare vs checkpoint", icon="PLAY")
-        # Show checkpoint data as reference
-        warn.separator(factor=0.3)
-        warn.label(text=f"Last checkpoint: {cp['totals'].get('total', '?')} issues  "
-                        f"({cp['totals'].get('blockers', '?')} blockers)")
-        return
-
-    # ── Compute current ───────────────────────────────────────────────────────
-    cur      = _compute_current_results(mc)
-    cp_tot   = cp.get("totals", {})
-    cur_tot  = cur["totals"]
-    cp_objs  = cp.get("objects", {})
-    cur_objs = cur["objects"]
-
-    # ── Totals box ────────────────────────────────────────────────────────────
-    tot_box = layout.box()
-    tot_box.label(text="Summary", icon="LINENUMBERS_ON")
-    _draw_delta_row(tot_box, "Total issues",
-                    cp_tot.get("total", 0), cur_tot["total"],
-                    icon="ERROR", big=True)
-    _draw_delta_row(tot_box, "Blockers",
-                    cp_tot.get("blockers", 0), cur_tot["blockers"],
-                    icon="CANCEL", big=True)
-
-    # ── Per-category ──────────────────────────────────────────────────────────
-    cat_box = layout.box()
-    cat_box.label(text="By category", icon="COLLAPSEMENU")
-    cp_by_cat  = cp_tot.get("by_category", {})
-    cur_by_cat = cur_tot["by_category"]
-
-    from .properties import CHECK_CATEGORIES, _CAT_ICONS
-    any_cat = False
-    for cat, checks in CHECK_CATEGORIES.items():
-        cp_v  = cp_by_cat.get(cat, 0)
-        cur_v = cur_by_cat.get(cat, 0)
-        if cp_v == 0 and cur_v == 0:
-            continue
-        any_cat = True
-        _draw_delta_row(cat_box, cat.capitalize(),
-                        cp_v, cur_v,
-                        icon=_CAT_ICONS.get(cat, "NONE"))
-    if not any_cat:
-        r = cat_box.row()
-        r.enabled = False
-        r.label(text="No active checks with issues", icon="CHECKMARK")
-
-    # ── Per-object ────────────────────────────────────────────────────────────
-    obj_box = layout.box()
-    obj_box.label(text="By object", icon="OBJECT_DATA")
-
-    all_names = sorted(set(list(cp_objs.keys()) + list(cur_objs.keys())))
-    if not all_names:
-        r = obj_box.row()
-        r.enabled = False
-        r.label(text="No objects", icon="CHECKMARK")
+    # ── Asset status badge ────────────────────────────────────────────────────
+    status = _get_asset_status(mc)
+    status_box = layout.box()
+    if status == "critical":
+        r = status_box.row()
+        r.alert = True
+        r.label(text="ASSET STATUS: CRITICAL", icon="CANCEL")
+        sub = status_box.row()
+        sub.scale_y = 0.75
+        sub.alert = True
+        sub.label(text="Blockers must be resolved before publish")
+    elif status == "warning":
+        r = status_box.row()
+        r.label(text="ASSET STATUS: REVIEW", icon="INFO")
+        sub = status_box.row()
+        sub.scale_y = 0.75
+        sub.enabled = False
+        sub.label(text="Warnings require artist decision")
+    elif status == "ready":
+        r = status_box.row()
+        r.label(text="ASSET STATUS: READY", icon="CHECKMARK")
     else:
-        for name in all_names:
-            is_new  = name not in cp_objs
-            is_gone = name not in cur_objs
-            cp_v    = cp_objs.get(name, {}).get("_total", 0)
-            cur_v   = cur_objs.get(name, {}).get("_total", 0)
-            short   = name if len(name) <= 24 else name[:21] + "…"
-            _draw_delta_row(obj_box, short, cp_v, cur_v,
-                            is_new=is_new, is_gone=is_gone)
+        r = status_box.row()
+        r.enabled = False
+        r.label(text="Run validation first", icon="PLAY")
+
+    # ── Scene Units (always shown) ────────────────────────────────────────────
+    _draw_scene_units_row(layout, mc)
+
+    # ── Scope ─────────────────────────────────────────────────────────────────
+    scope_row = layout.row(align=True)
+    scope_row.operator("asset_checker.validate_scene",      text="Scene",      icon="WORLD")
+    scope_row.operator("asset_checker.validate_collection", text="Collection", icon="OUTLINER_COLLECTION")
+    scope_row.operator("asset_checker.clear_validation",    text="",           icon="X")
+
+    layout.separator(factor=0.3)
+
+    # ── Filtered checkers (BLOCKER + WARNING only) ────────────────────────────
+    checks_box = layout.box()
+    checks_box.label(text="Critical & Warning Checks:", icon="ERROR")
+    mc.draw_options(checks_box, severity_filter={'BLOCKER', 'WARNING'})
+
+    if prefs := _get_prefs():
+        off_row = checks_box.row(align=True)
+        off_row.scale_y = 0.8
+        off_row.prop(prefs, "faces_offset", text="Face Offset")
+        off_row.prop(prefs, "points_offset", text="Point Offset")
 
 
 def draw_hierarchy_block(layout, mc):
@@ -1037,7 +985,13 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
 
         # ── Branch: Coordinator Mode ─────────────────────────────────────────
         if mc.coordinator_mode:
-            draw_coordinator_panel(layout, mc, context)
+            try:
+                draw_coordinator_panel(layout, mc, context)
+            except Exception as _exc:
+                import traceback
+                layout.label(text=f"Coordinator error: {_exc}", icon="ERROR")
+                print("[STUKACH] draw_coordinator_panel error:")
+                traceback.print_exc()
             return
 
         # ── "Settings restored" hint ─────────────────────────────────────────
@@ -1192,49 +1146,51 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
         # Asset Status — bottom-of-panel pipeline verdict
         self._draw_asset_status(layout, mc)
 
-        # Export block
-        if MC.objects:
-            try:
-                exp_box = layout.box()
+        # ── Export / Pre-flight / Checkpoint ─────────────────────────────────
+        try:
+            exp_box = layout.box()
+            has_results = bool(MC.objects)
 
-                # Report export
-                exp_row = exp_box.row(align=True)
-                exp_row.label(text="Export:", icon="EXPORT")
-                for fmt, lbl in (('JSON', 'JSON'), ('CSV', 'CSV'), ('HTML', 'HTML')):
-                    op = exp_row.operator("asset_checker.export_report", text=lbl)
-                    op.fmt = fmt
+            # Report export — only meaningful after validation
+            exp_row = exp_box.row(align=True)
+            exp_row.label(text="Export:", icon="EXPORT")
+            exp_row.enabled = has_results
+            for fmt, lbl in (('JSON', 'JSON'), ('CSV', 'CSV'), ('HTML', 'HTML')):
+                op = exp_row.operator("asset_checker.export_report", text=lbl)
+                op.fmt = fmt
 
-                # Pre-flight export
-                pf_row = exp_box.row(align=True)
-                pf_row.label(text="Pre-flight:", icon="CHECKMARK")
-                op_fbx = pf_row.operator("asset_checker.preflight_export",
-                                         text="FBX", icon="EXPORT")
-                op_fbx.fmt = 'FBX'
-                op_usd = pf_row.operator("asset_checker.preflight_export",
-                                         text="USD", icon="EXPORT")
-                op_usd.fmt = 'USD'
+            # Pre-flight export — only meaningful after validation
+            pf_row = exp_box.row(align=True)
+            pf_row.label(text="Pre-flight:", icon="CHECKMARK")
+            pf_row.enabled = has_results
+            op_fbx = pf_row.operator("asset_checker.preflight_export",
+                                     text="FBX", icon="EXPORT")
+            op_fbx.fmt = 'FBX'
+            op_usd = pf_row.operator("asset_checker.preflight_export",
+                                     text="USD", icon="EXPORT")
+            op_usd.fmt = 'USD'
 
-                # Coordinator checkpoint
-                from .properties import _AC_CHECKPOINT_KEY
-                cp_exists = bool(context.scene.get(_AC_CHECKPOINT_KEY))
-                cp_row = exp_box.row(align=True)
-                cp_row.label(text="Checkpoint:", icon="BOOKMARKS")
+            # Checkpoint — always available
+            from .properties import _AC_CHECKPOINT_KEY
+            cp_exists = bool(context.scene.get(_AC_CHECKPOINT_KEY))
+            cp_row = exp_box.row(align=True)
+            cp_row.label(text="Checkpoint:", icon="BOOKMARKS")
+            cp_row.operator(
+                "asset_checker.save_checkpoint",
+                text="Update" if cp_exists else "Save",
+                icon="FILE_TICK",
+            )
+            cp_row.operator(
+                "asset_checker.load_checkpoint",
+                text="", icon="IMPORT",
+            )
+            if cp_exists:
                 cp_row.operator(
-                    "asset_checker.save_checkpoint",
-                    text="Update" if cp_exists else "Save",
-                    icon="FILE_TICK",
+                    "asset_checker.clear_checkpoint",
+                    text="", icon="X", emboss=False,
                 )
-                cp_row.operator(
-                    "asset_checker.load_checkpoint",
-                    text="", icon="IMPORT",
-                )
-                if cp_exists:
-                    cp_row.operator(
-                        "asset_checker.clear_checkpoint",
-                        text="", icon="X", emboss=False,
-                    )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
 
 class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):

@@ -1731,8 +1731,15 @@ class MeshCheckProperties(PropertyGroup):
 
     checker_options = tuple(item for sublist in CHECK_CATEGORIES.values() for item in sublist)
 
-    def draw_options(self, layout):
+    def draw_options(self, layout, severity_filter=None):
+        """Draw the check grid.
+
+        severity_filter – if given, only show checks whose CHECK_SEVERITY level
+        is in the set.  E.g. {'BLOCKER', 'WARNING'} for Coordinator Mode.
+        Categories where all checks are filtered out are hidden entirely.
+        """
         from .manager import MeshCheck
+        from .ui import CHECK_SEVERITY  # lazy import to avoid circular
         addon_name = __name__.split(".")[0]
         try:
             addon_prefs = bpy.context.preferences.addons[addon_name].preferences
@@ -1740,6 +1747,15 @@ class MeshCheckProperties(PropertyGroup):
             addon_prefs = None
 
         for cat_name, checks in CHECK_CATEGORIES.items():
+            # Apply severity filter — skip categories where nothing passes
+            if severity_filter:
+                visible_checks = [c for c in checks
+                                  if CHECK_SEVERITY.get(c, 'INFO') in severity_filter]
+                if not visible_checks:
+                    continue
+            else:
+                visible_checks = list(checks)
+
             open_prop = f"cat_{cat_name.lower()}_open"
             is_open   = getattr(self, open_prop, True)
 
@@ -1767,7 +1783,7 @@ class MeshCheckProperties(PropertyGroup):
                         mc_obj._checks.get(c) and mc_obj._checks[c].count > 0
                         for mc_obj in MeshCheck.objects.values()
                     )
-                    for c in checks
+                    for c in visible_checks
                 )
                 if cat_has_fix:
                     fix_op = header.operator(
@@ -1777,7 +1793,7 @@ class MeshCheckProperties(PropertyGroup):
                     )
                     fix_op.category = cat_name
 
-            any_on = any(getattr(self, c, False) for c in checks if hasattr(self, c))
+            any_on = any(getattr(self, c, False) for c in visible_checks if hasattr(self, c))
             op = header.operator(
                 "mesh_check.toggle_category",
                 text="",
@@ -1794,7 +1810,7 @@ class MeshCheckProperties(PropertyGroup):
             col_1 = row.column()
             col_2 = row.column()
 
-            for i, check in enumerate(checks):
+            for i, check in enumerate(visible_checks):
                 col = col_1 if i % 2 == 0 else col_2
                 r = col.row(align=True)
                 icon = "CHECKBOX_HLT" if getattr(self, check, False) else "CHECKBOX_DEHLT"
