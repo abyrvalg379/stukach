@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id            = "stukach"
+version       = "1.3.0"
+name          = "STUKACH"
+tagline       = "Pipeline asset validation system"
+maintainer    = "Maksim Kovalev"
+type          = "add-on"
+
+blender_version_min = "4.2.0"
+
+license       = ["SPDX:GPL-3.0-or-later"]
+
+tags          = ["Pipeline", "UV", "Mesh", "Object"]
+
+[permissions]
+# No network, files outside addon dir, or clipboard access needed

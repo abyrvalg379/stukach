@@ -1,13 +1,5 @@
 # -*- coding:utf-8 -*-
-bl_info = {
-    "name": "STUKACH",
-    "description": "Pipeline Snitch System",
-    "author": "Maksim Kovalev",
-    "version": (1, 3, 0),
-    "blender": (5, 1, 0),
-    "location": "View3D > N-Panel > STUKACH",
-    "category": "Object",
-}
+# Metadata is defined in blender_manifest.toml (Blender 4.2+ extension standard).
 
 import bpy
 from bpy.props import BoolProperty, PointerProperty
