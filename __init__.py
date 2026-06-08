@@ -4,7 +4,7 @@ bl_info = {
     "description": "Pipeline Snitch System",
     "author": "Maksim Kovalev",
     "version": (1, 3, 0),
-    "blender": (4, 5, 0),
+    "blender": (5, 1, 0),
     "location": "View3D > N-Panel > STUKACH",
     "category": "Object",
 }

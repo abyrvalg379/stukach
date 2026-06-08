@@ -1,0 +1,16 @@
+# Dev utilities — not part of the release
+reload_addon.py
+_gen_docx.py
+
+# Claude project instructions
+CLAUDE.md
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db

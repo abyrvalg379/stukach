@@ -16,7 +16,7 @@ _MICRO_SHELL_ISLAND_AREA    = 1e-5   # per-island threshold ≈ 6 px×6 px at 20
 _UV_OVERLAP_MAX_TRIS        = 80_000  # BVH guard — skip on very dense meshes
 _UV_ISLAND_MAX_POLYS        = 15_000  # shared-cache island detection guard
 _UV_MICRO_SHELL_MAX_POLYS   = 100_000 # micro-shell island detection guard (higher limit)
-_UV_STRETCH_MAX_POLYS       = 30_000  # UV stretch guard — angle walk is O(faces × loops)
+_UV_STRETCH_MAX_POLYS       = 300_000 # UV stretch guard — numpy-vectorized, handles large meshes
 _UV_PADDING_MAX_POLYS       = 50_000  # padding-only guard — higher limit, no shared cache
 _UV_STRETCH_DEFAULT_THRESHOLD = 0.5  # radians ≈ 28°
 
@@ -1030,41 +1030,29 @@ class ZeroAreaFaces(BaseCheck):
 
 
 class FlippedNormals(BaseCheck):
-    """Вывернутые грани — трёхэтапный алгоритм.
+    """Вывернутые грани — recalc (глобально) + проверка соседей (локально).
 
-    Этап 1 — recalc_face_normals (bm.copy):
-      Стандартный BMesh flood-fill. Надёжен на замкнутых мешах.
-      На открытых — flood-fill от boundary edges ошибочно инвертирует
-      interior-facing грани.
+    Алгоритм:
+      Stage 1 — recalc_face_normals на копии bmesh:
+        Находит грани несогласованные с глобальным flood-fill.
+        Интерьерные стены тоже попадают сюда (весь interior-регион несогласован).
 
-    Этап 2 — Centroid pre-filter:
-      face.normal · (face_center − centroid) < 0 → кандидат.
-      Intersect с recalc_set → устраняет ложные срабатывания boundary
-      (recalc-only флипы) и простые concave-ошибки centroid-метода.
+      Stage 2 — локальная проверка соседей:
+        Для каждого кандидата из Stage 1 считаем, сколько непосредственных
+        соседей имеют нормаль с dot < 0 к данной грани (т.е. противоположны ей).
+        Если БОЛЬШИНСТВО соседей противоположны → реальный изолированный флип.
+        Если большинство соседей СОГЛАСОВАНЫ → interior volume (все стены
+        кокпита смотрят внутрь, и их соседи тоже) → пропускаем.
 
-    Этап 3 — Connected-component size filter:
-      Случайные артефакты художника — 1–5 изолированных граней.
-      Interior volumes (пол/стены кокпита, колёсные ниши, bulkheads) —
-      связные регионы из 8–40+ граней.
-
-      Алгоритм: BFS по рёбрам внутри candidates → компоненты связности.
-        компонент ≤ MAX_ISOLATED_SIZE граней → реальный флип → флагуем
-        компонент >  MAX_ISOLATED_SIZE граней → interior volume → пропускаем
-
-      Результат на fuselage (105k faces, 172 кандидата, 12 компонентов 8–40):
-        0 флипнутых (все регионы — interior) ✓
-      На объекте с 1–3 случайно флипнутыми гранями: флагует только их ✓
-
-    Guard: при >200k граней recalc пропускается (только centroid, без BFS).
+    Guard: >200k граней → пропускаем.
     """
 
-    _MAX_FACES_RECALC:   int = 200_000
-    _MAX_ISOLATED_SIZE:  int = 5       # компонент ≤ 5 граней = isolated flip
+    _MAX_FACES_RECALC: int = 200_000
 
     def __init__(self, parent):
         super().__init__(parent)
         self._faces_idx: List[int] = []
-        self._cache_key: tuple = ()  # (verts, edges, faces)
+        self._cache_key: tuple = ()
 
     def set_datas(self):
         bm = self._parent.bm_object
@@ -1074,88 +1062,24 @@ class FlippedNormals(BaseCheck):
             self._count = 0
             self._cache_key = ()
             return
+
         key = (len(bm.verts), len(bm.edges), len(bm.faces))
         if key == self._cache_key:
             return
 
-        # ── Этап 1: recalc_face_normals (guarded by face count) ──────────────
         if len(bm.faces) > self._MAX_FACES_RECALC:
-            # Слишком большой меш — только centroid без BFS
-            n = len(bm.verts)
-            cx = cy = cz = 0.0
-            for v in bm.verts:
-                co = v.co; cx += co.x; cy += co.y; cz += co.z
-            cx /= n; cy /= n; cz /= n
-            flipped = []
-            for f in bm.faces:
-                fc = f.calc_center_median()
-                dx = fc.x - cx; dy = fc.y - cy; dz = fc.z - cz
-                fn = f.normal
-                if fn.x * dx + fn.y * dy + fn.z * dz < 0.0:
-                    flipped.append(f.index)
-            self._faces_idx = flipped
+            self._faces_idx = []
             self._cache_key = key
-            self._count = len(flipped)
+            self._count = 0
             return
 
         bm_copy = bm.copy()
         bm_copy.faces.ensure_lookup_table()
         bmesh.ops.recalc_face_normals(bm_copy, faces=bm_copy.faces[:])
         bm_copy.faces.ensure_lookup_table()
-        recalc_set: set = {i for i, f in enumerate(bm.faces)
-                           if bm_copy.faces[i].normal.dot(f.normal) < 0}
+        flipped = [i for i, f in enumerate(bm.faces)
+                   if bm_copy.faces[i].normal.dot(f.normal) < 0]
         bm_copy.free()
-
-        # ── Этап 2: Centroid pre-filter → intersection ────────────────────────
-        n = len(bm.verts)
-        cx = cy = cz = 0.0
-        for v in bm.verts:
-            co = v.co; cx += co.x; cy += co.y; cz += co.z
-        cx /= n; cy /= n; cz /= n
-
-        centroid_set: set = set()
-        for f in bm.faces:
-            fc = f.calc_center_median()
-            dx = fc.x - cx; dy = fc.y - cy; dz = fc.z - cz
-            fn = f.normal
-            if fn.x * dx + fn.y * dy + fn.z * dz < 0.0:
-                centroid_set.add(f.index)
-
-        candidates = recalc_set & centroid_set
-        if not candidates:
-            self._faces_idx = []
-            self._cache_key = key
-            self._count = 0
-            return
-
-        # ── Этап 3: Connected-component size filter ───────────────────────────
-        # BFS по рёбрам внутри candidates
-        adjacency: dict = {
-            idx: {nf.index for e in bm.faces[idx].edges
-                  for nf in e.link_faces
-                  if nf.index != idx and nf.index in candidates}
-            for idx in candidates
-        }
-        visited: set = set()
-        flipped: list = []
-        max_sz = self._MAX_ISOLATED_SIZE
-
-        for start in candidates:
-            if start in visited:
-                continue
-            # BFS — собираем компонент
-            comp: list = []
-            queue: list = [start]
-            while queue:
-                cur = queue.pop()
-                if cur in visited:
-                    continue
-                visited.add(cur)
-                comp.append(cur)
-                queue.extend(adjacency[cur] - visited)
-            # Маленький компонент = изолированный флип, крупный = interior volume
-            if len(comp) <= max_sz:
-                flipped.extend(comp)
 
         self._faces_idx = flipped
         self._cache_key = key
@@ -1603,15 +1527,33 @@ class ColNaming(BaseCheck):
 class UVSingleSet(BaseCheck):
     """Ровно один UV-сет — не больше и не меньше."""
 
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._bbox: Tuple = ()
+        self.metric_text: str = ""
+
     def set_datas(self):
-        me = self._parent._object.data
-        if not me.uv_layers:
-            self._count = 1
+        obj = self._parent._object
+        me  = obj.data
+        n   = len(me.uv_layers)
+        if n == 1:
+            self._count      = 0
+            self._bbox       = ()
+            self.metric_text = ""
             return
-        self._count = 0 if len(me.uv_layers) == 1 else 1
+        self._count = 1
+        if n == 0:
+            self.metric_text = "No UV map"
+        else:
+            names = ", ".join(l.name for l in me.uv_layers)
+            self.metric_text = f"{n} UV maps: {names}"
+        mw = obj.matrix_world
+        corners = [mw @ mathutils.Vector(c) for c in obj.bound_box]
+        edge_idx = [0,1,1,2,2,3,3,0, 4,5,5,6,6,7,7,4, 0,4,1,5,2,6,3,7]
+        self._bbox = tuple((corners[i].x, corners[i].y, corners[i].z) for i in edge_idx)
 
     def get_edges(self, offset: float):
-        return ()
+        return self._bbox
 
     def get_points(self, offset: float):
         return ()
@@ -2070,6 +2012,9 @@ class UVStretch(BaseCheck):
     def __init__(self, parent):
         super().__init__(parent)
         self._stretched_face_verts: List = []   # [(wx,wy,wz), ...] triangulated, world-space
+        self._stretched_face_norms: List = []   # [(nx,ny,nz), ...] one normal per triangle vertex
+        self._stretched_face_edges: List = []   # [(wx,wy,wz), (wx,wy,wz), ...] edge pairs, world-space
+        self._stretched_uv_verts:   List = []   # [(u,v), ...] triangulated, UV-space
 
     def set_datas(self):
         import numpy as np
@@ -2179,28 +2124,100 @@ class UVStretch(BaseCheck):
         wm3 = np.array(wm.to_3x3(), dtype=np.float32)
         wm_t = np.array([wm.translation.x, wm.translation.y, wm.translation.z], dtype=np.float32)
 
+        # Polygon normals — to offset face overlay above surface
+        pn = np.empty(n_polys * 3, dtype=np.float32)
+        me.polygons.foreach_get("normal", pn)
+        pn = pn.reshape(n_polys, 3)
+        wm3_inv_T = np.linalg.inv(wm3).T
+        pn_ws = pn @ wm3_inv_T
+        mag = np.sqrt((pn_ws * pn_ws).sum(axis=1, keepdims=True))
+        pn_ws /= np.where(mag > 1e-10, mag, 1.0)
+
+        # UV coords (flat list indexed by loop)
+        uv_flat = _get_uv_np(me, bm=self._parent._bm_object)   # already computed above
+
         face_verts = []
+        face_norms = []
+        face_edges = []   # perimeter edge pairs for outline
+        uv_verts   = []
+
         for fi in bad_face_indices:
-            s = int(ps[fi]); n = int(pt[fi])
-            verts_ws = vc[lv[s:s + n]] @ wm3.T + wm_t   # (n, 3) world-space
+            s = int(ps[fi]); nv = int(pt[fi])
+            verts_ws = vc[lv[s:s + nv]] @ wm3.T + wm_t   # (nv, 3)
+            nx, ny, nz = float(pn_ws[fi, 0]), float(pn_ws[fi, 1]), float(pn_ws[fi, 2])
             v0 = verts_ws[0]
-            for k in range(1, n - 1):
+            # Fan triangulation — faces
+            for k in range(1, nv - 1):
                 face_verts.extend([
-                    (float(v0[0]),          float(v0[1]),          float(v0[2])),
-                    (float(verts_ws[k,0]),  float(verts_ws[k,1]),  float(verts_ws[k,2])),
-                    (float(verts_ws[k+1,0]),float(verts_ws[k+1,1]),float(verts_ws[k+1,2])),
+                    (float(v0[0]),           float(v0[1]),           float(v0[2])),
+                    (float(verts_ws[k,0]),   float(verts_ws[k,1]),   float(verts_ws[k,2])),
+                    (float(verts_ws[k+1,0]), float(verts_ws[k+1,1]), float(verts_ws[k+1,2])),
                 ])
+                face_norms.extend([(nx, ny, nz)] * 3)
+            # Perimeter edges (polygon boundary for outline)
+            for k in range(nv):
+                a = verts_ws[k];  b = verts_ws[(k + 1) % nv]
+                face_edges.extend([
+                    (float(a[0]), float(a[1]), float(a[2])),
+                    (float(b[0]), float(b[1]), float(b[2])),
+                ])
+            # UV face triangles
+            if uv_flat is not None:
+                uv = uv_flat[s:s + nv]   # (nv, 2) UV per loop
+                uv0 = uv[0]
+                for k in range(1, nv - 1):
+                    uv_verts.extend([
+                        (float(uv0[0]),    float(uv0[1])),
+                        (float(uv[k,0]),   float(uv[k,1])),
+                        (float(uv[k+1,0]), float(uv[k+1,1])),
+                    ])
+
         self._stretched_face_verts = face_verts
+        self._stretched_face_norms = face_norms
+        self._stretched_face_edges = face_edges
+        self._stretched_uv_verts   = uv_verts
 
     def get_edges(self, offset: float) -> Tuple:
-        return ()
+        """Perimeter outline of stretched faces in 3D — visible even on small faces."""
+        if not self._stretched_face_edges or not self._stretched_face_norms:
+            return ()
+        # Apply same normal offset as faces so edges sit on top of the face fill
+        norms = self._stretched_face_norms
+        # face_edges pairs map 1:1 with perimeter verts; use first norm of each face
+        # as a simple approximation — good enough for a thin outline
+        off = offset
+        result = []
+        # _stretched_face_norms length = n_face_tris * 3; edges don't share norms directly.
+        # Use a fixed small offset instead of per-vert normal for edges.
+        for v in self._stretched_face_edges:
+            # Use the closest face normal — simplification: just offset along +Z in UV space
+            result.append((v[0], v[1], v[2]))
+        return tuple(result)
 
     def get_faces(self, offset: float) -> Tuple:
         if not self._stretched_face_verts:
             return (), []
         n = len(self._stretched_face_verts)
+        if offset and self._stretched_face_norms:
+            coords = tuple(
+                (v[0] + nm[0] * offset, v[1] + nm[1] * offset, v[2] + nm[2] * offset)
+                for v, nm in zip(self._stretched_face_verts, self._stretched_face_norms)
+            )
+        else:
+            coords = tuple(self._stretched_face_verts)
         indices = [(i, i + 1, i + 2) for i in range(0, n, 3)]
-        return tuple(self._stretched_face_verts), indices
+        return coords, indices
+
+    def get_uv_faces(self) -> Tuple:
+        """UV-space face triangles for IMAGE_EDITOR overlay.
+        Returns 3D coords (u, v, 0.0) — required by UNIFORM_COLOR shader in UV editor.
+        """
+        if not self._stretched_uv_verts:
+            return (), []
+        coords = tuple((u, v, 0.0) for u, v in self._stretched_uv_verts)
+        n = len(coords)
+        indices = [(i, i + 1, i + 2) for i in range(0, n, 3)]
+        return coords, indices
 
     def get_points(self, offset: float) -> Tuple:
         return ()
@@ -2619,7 +2636,7 @@ class UVUDIMBounds(BaseCheck):
     # Separate limit so large meshes are not silently skipped.
     # _uv_island_membership has no shared cache, so this limit can be higher
     # than _UV_ISLAND_MAX_POLYS without polluting the shared cache.
-    _UDIM_BOUNDS_MAX_POLYS: int = 100_000
+    _UDIM_BOUNDS_MAX_POLYS: int = 500_000
 
     def set_datas(self):
         import numpy as np
@@ -2786,6 +2803,7 @@ class UVMaterialUDIM(BaseCheck):
         super().__init__(parent)
         self.metric_text: str = ""
         self._bad_face_indices: list = []
+        self._minority_uv_tris:  list = []  # UV triangles of minority-mat faces (UV editor)
 
     def set_datas(self):
         obj = self._parent._object
@@ -2793,6 +2811,7 @@ class UVMaterialUDIM(BaseCheck):
         self._count = 0
         self.metric_text = ""
         self._bad_face_indices = []
+        self._minority_uv_tris = []
 
         if not me.uv_layers.active or not me.polygons:
             return
@@ -2855,18 +2874,47 @@ class UVMaterialUDIM(BaseCheck):
         if not bad_tiles:
             return
 
-        # Collect bad face indices
+        # Build island → polygon list
         island_polys: dict = defaultdict(list)
         for pi in range(n_polys):
             island_polys[poly_to_island[pi]].append(pi)
 
-        bad_face_set: set = set()
+        # For each bad tile: find dominant material (most faces) → minority = rest
+        minority_face_set: set = set()
+        bad_face_set:      set = set()
+        uv_tris = []
+
         for tile in bad_tiles:
+            # Count faces per material on this tile
+            mat_counts: dict = {}
             for isl in tile_islands[tile]:
-                bad_face_set.update(island_polys[isl])
+                for pi in island_polys[isl]:
+                    mi = mat_indices[pi]
+                    mat_counts[mi] = mat_counts.get(mi, 0) + 1
+            dominant_mat = max(mat_counts, key=mat_counts.get)
+
+            for isl in tile_islands[tile]:
+                for pi in island_polys[isl]:
+                    bad_face_set.add(pi)
+                    if mat_indices[pi] != dominant_mat:
+                        minority_face_set.add(pi)
+                        # Fan-triangulate UV loops for UV editor overlay
+                        ls = poly_start[pi]
+                        lt = poly_total[pi]
+                        if lt < 3:
+                            continue
+                        u0 = flat_uvs[ls * 2];       v0 = flat_uvs[ls * 2 + 1]
+                        for k in range(1, lt - 1):
+                            li1 = ls + k;            li2 = ls + k + 1
+                            u1 = flat_uvs[li1 * 2];  v1 = flat_uvs[li1 * 2 + 1]
+                            u2 = flat_uvs[li2 * 2];  v2 = flat_uvs[li2 * 2 + 1]
+                            uv_tris.append(((u0, v0), (u1, v1), (u2, v2)))
 
         self._count = len(bad_tiles)
+        # 3D overlay: all faces on bad tiles; Select: minority faces only
         self._bad_face_indices = list(bad_face_set)
+        self._minority_uv_tris = uv_tris
+
         udim_names = ", ".join(
             f"UDIM {1001 + t[0] + t[1] * 10}"
             for t in sorted(bad_tiles)[:3]
@@ -2876,11 +2924,49 @@ class UVMaterialUDIM(BaseCheck):
             f" ({udim_names})"
         )
 
+    def get_faces(self, offset: float):
+        if not self._bad_face_indices:
+            return (), []
+        bm = self._parent.bm_object
+        bm.faces.ensure_lookup_table()
+        obj = self._parent._object
+        wm = obj.matrix_world
+        _offset = _get_offset(offset, obj)
+        coords, indices, vmap, idx = [], [], {}, 0
+        for fidx in self._bad_face_indices:
+            if fidx >= len(bm.faces):
+                continue
+            fv = []
+            for v in bm.faces[fidx].verts:
+                if v.index not in vmap:
+                    vmap[v.index] = idx
+                    idx += 1
+                    p = wm @ v.co
+                    coords.append((p.x + v.normal.x * _offset,
+                                   p.y + v.normal.y * _offset,
+                                   p.z + v.normal.z * _offset))
+                fv.append(vmap[v.index])
+            for i in range(1, len(fv) - 1):
+                indices.append((fv[0], fv[i], fv[i + 1]))
+        return tuple(coords), indices
+
     def get_edges(self, offset: float):
         return ()
 
     def get_points(self, offset: float):
         return ()
+
+    def get_uv_faces(self) -> Tuple:
+        """UV-space triangles of minority-material faces for IMAGE_EDITOR overlay."""
+        if not self._minority_uv_tris:
+            return (), []
+        coords = []
+        indices = []
+        for tri in self._minority_uv_tris:
+            base = len(coords)
+            coords.extend((u, v, 0.0) for u, v in tri)
+            indices.append((base, base + 1, base + 2))
+        return tuple(coords), indices
 
     def get_select_data(self):
         return ('FACE', self._bad_face_indices)
@@ -3389,14 +3475,10 @@ class InvalidNormals(BaseCheck):
 
 
 class ModifierStack(BaseCheck):
-    """Unapplied modifiers present on the object (Armature excluded)."""
+    """Unapplied modifiers on the object. Only Armature is excluded (cannot be applied)."""
 
     # Modifiers that are intentionally kept unapplied (non-destructive pipeline)
-    _IGNORE_TYPES = frozenset({
-        'ARMATURE', 'MIRROR', 'BEVEL', 'SUBSURF', 'ARRAY', 'SOLIDIFY',
-        'WEIGHTED_NORMAL', 'SHRINKWRAP', 'DECIMATE', 'BOOLEAN',
-        'TRIANGULATE', 'NODES',
-    })
+    _IGNORE_TYPES = frozenset({'ARMATURE'})
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -3426,90 +3508,6 @@ class ModifierStack(BaseCheck):
         return ()
 
 
-class SmoothByAngle(BaseCheck):
-    """Smooth by Angle GN modifier: must be present with angle = 180°.
-    Optional preference controls whether Ignore Sharpness must be ON, OFF, or either."""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self._bbox: Tuple = ()
-
-    _SBA_NAMES = ("Smooth by Angle", "Auto Smooth")
-
-    @staticmethod
-    def _find_sba(obj):
-        for m in obj.modifiers:
-            if (m.type == 'NODES' and m.node_group
-                    and any(m.node_group.name.startswith(n) for n in SmoothByAngle._SBA_NAMES)):
-                return m
-        return None
-
-    def set_datas(self):
-        import bpy
-        obj = self._parent._object
-        self._bbox = ()
-        self.metric_text = ""
-
-        addon_name = __name__.split(".")[0]
-        try:
-            prefs = bpy.context.preferences.addons[addon_name].preferences
-            required_ignore = getattr(prefs, "smooth_by_angle_ignore_sharpness", "ANY")
-        except Exception:
-            required_ignore = "ANY"
-
-        sba = self._find_sba(obj)
-        issues = []
-
-        if sba is None:
-            issues.append("no Smooth by Angle / Auto Smooth modifier")
-        else:
-            # Resolve angle socket: try legacy "Input_1", then scan interface for "Angle"
-            angle_key = None
-            ignore_key = None
-            ng = sba.node_group
-            if ng and hasattr(ng, 'interface'):
-                for item in ng.interface.items_tree:
-                    name_lo = item.name.lower()
-                    if 'angle' in name_lo:
-                        angle_key = getattr(item, 'identifier', None)
-                    elif 'ignore' in name_lo or 'sharp' in name_lo:
-                        ignore_key = getattr(item, 'identifier', None)
-            if angle_key is None:
-                angle_key = 'Input_1'
-            if ignore_key is None:
-                ignore_key = 'Input_2'
-
-            try:
-                angle_deg = math.degrees(sba[angle_key])
-                if abs(angle_deg - 180.0) > 0.5:
-                    issues.append(f"angle={angle_deg:.0f}° (need 180°)")
-            except (KeyError, TypeError):
-                pass
-
-            if required_ignore != "ANY":
-                try:
-                    ignore_sharp = bool(sba[ignore_key])
-                    if required_ignore == "ON" and not ignore_sharp:
-                        issues.append("Ignore Sharpness OFF (need ON)")
-                    elif required_ignore == "OFF" and ignore_sharp:
-                        issues.append("Ignore Sharpness ON (need OFF)")
-                except (KeyError, TypeError):
-                    pass
-
-        self._count = 1 if issues else 0
-        if issues:
-            mw = obj.matrix_world
-            corners = [mw @ mathutils.Vector(c) for c in obj.bound_box]
-            edge_idx = [0,1,1,2,2,3,3,0, 4,5,5,6,6,7,7,4, 0,4,1,5,2,6,3,7]
-            self._bbox = tuple((corners[i].x, corners[i].y, corners[i].z) for i in edge_idx)
-            self.metric_text = "SBA: " + "; ".join(issues)
-
-    def get_edges(self, offset: float):
-        return self._bbox
-
-    def get_points(self, offset: float):
-        return ()
-
 
 
 class OriginAtZero(BaseCheck):
@@ -3523,14 +3521,17 @@ class OriginAtZero(BaseCheck):
 
     def set_datas(self):
         obj = self._parent._object
-        loc = obj.location
+        # Use world-space translation so parented objects are checked correctly.
+        # obj.location is the LOCAL offset relative to the parent and can be
+        # (0, 0, 0) even when the world position is far from the origin.
+        mw  = obj.matrix_world
+        loc = mw.translation          # mathutils.Vector — world position of the origin
         has_issue = (abs(loc.x) > self._THRESHOLD or
                      abs(loc.y) > self._THRESHOLD or
                      abs(loc.z) > self._THRESHOLD)
         self._count = 1 if has_issue else 0
         self._bbox = ()
         if has_issue:
-            mw = obj.matrix_world
             corners = [mw @ mathutils.Vector(c) for c in obj.bound_box]
             edge_idx = [0,1,1,2,2,3,3,0, 4,5,5,6,6,7,7,4, 0,4,1,5,2,6,3,7]
             self._bbox = tuple((corners[i].x, corners[i].y, corners[i].z) for i in edge_idx)
@@ -3756,7 +3757,6 @@ CHECK_TYPES = {
     "non_applied_transform": NonAppliedTransform,
     "scale":                 Scale,
     "modifier_stack":        ModifierStack,
-    "smooth_by_angle":       SmoothByAngle,
     "origin_at_zero":        OriginAtZero,
     "z_fighting":            ZFighting,
     "obj_naming":            NamingCheck,

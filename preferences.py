@@ -167,7 +167,6 @@ class MeshCheckPreferences(AddonPreferences):
     scale_color:                 FloatVectorProperty(name="Scale issue",        default=(1.0, 0.4, 0.0), min=0.0, max=1.0, size=3, subtype="COLOR")
     origin_at_zero_color:        FloatVectorProperty(name="Origin not at zero", default=(1.0, 0.8, 0.0), min=0.0, max=1.0, size=3, subtype="COLOR")
     modifier_stack_color:        FloatVectorProperty(name="Modifier stack",     default=(0.6, 0.0, 1.0), min=0.0, max=1.0, size=3, subtype="COLOR")
-    smooth_by_angle_color:       FloatVectorProperty(name="Smooth by Angle",    default=(0.0, 0.8, 0.8), min=0.0, max=1.0, size=3, subtype="COLOR")
     face_aspect_ratio_threshold: FloatProperty(
         name="Aspect Ratio Threshold",
         description="Quads with ratio longer_side/shorter_side above this value are flagged",
@@ -175,18 +174,7 @@ class MeshCheckPreferences(AddonPreferences):
     )
     face_aspect_ratio_color:     FloatVectorProperty(name="Face Aspect Ratio",  default=(1.0, 0.85, 0.0), min=0.0, max=1.0, size=3, subtype="COLOR")
 
-    smooth_by_angle_ignore_sharpness: EnumProperty(
-        name="Ignore Sharpness",
-        description="Required state of 'Ignore Sharpness' in the Smooth by Angle modifier",
-        items=[
-            ('ANY', "Any",  "Do not check Ignore Sharpness state"),
-            ('ON',  "ON",   "Require Ignore Sharpness ON  (HP / fully smooth)"),
-            ('OFF', "OFF",  "Require Ignore Sharpness OFF (LP / Mid Poly — sharp edges respected)"),
-        ],
-        default='ANY',
-    )
-
-    # SYMMETRY
+# SYMMETRY
     symmetry_x_color: FloatVectorProperty(name="Symmetry X", default=(1.0,  0.15, 0.15), min=0.0, max=1.0, size=3, subtype="COLOR")
     symmetry_y_color: FloatVectorProperty(name="Symmetry Y", default=(0.15, 1.0,  0.15), min=0.0, max=1.0, size=3, subtype="COLOR")
     symmetry_z_color: FloatVectorProperty(name="Symmetry Z", default=(0.15, 0.4,  1.0),  min=0.0, max=1.0, size=3, subtype="COLOR")
@@ -199,7 +187,7 @@ class MeshCheckPreferences(AddonPreferences):
     uv_stretch_color:       FloatVectorProperty(name="UV Stretch",      default=(1.0, 0.5, 0.0),  min=0.0, max=1.0, size=3, subtype="COLOR")
     uv_padding_color:       FloatVectorProperty(name="UV Padding",      default=(1.0, 0.6, 0.0),  min=0.0, max=1.0, size=3, subtype="COLOR")
     uv_udim_bounds_color:   FloatVectorProperty(name="UDIM Bounds",     default=(0.7, 0.2, 1.0),  min=0.0, max=1.0, size=3, subtype="COLOR")
-    uv_material_udim_color: FloatVectorProperty(name="Mat per UDIM",   default=(1.0, 0.2, 0.6),  min=0.0, max=1.0, size=3, subtype="COLOR")
+    uv_material_udim_color: FloatVectorProperty(name="Uv Material Udim",   default=(1.0, 0.2, 0.6),  min=0.0, max=1.0, size=3, subtype="COLOR")
 
     # NAMING colors
     obj_naming_color:  FloatVectorProperty(name="Naming issue",  default=(1.0, 0.5, 0.0), min=0.0, max=1.0, size=3, subtype="COLOR")
@@ -393,13 +381,6 @@ class MeshCheckPreferences(AddonPreferences):
         hint.enabled = False
         hint.label(text="Angle diff > threshold → face flagged as stretched", icon="INFO")
 
-        # ── Smooth by Angle ───────────────────────────────────────────────
-        box = layout.box()
-        box.label(text="Smooth by Angle", icon="MOD_SMOOTH")
-        row = box.row(align=True)
-        row.label(text="Ignore Sharpness:")
-        row.prop(self, "smooth_by_angle_ignore_sharpness", text="")
-
         # ── Face Aspect Ratio ─────────────────────────────────────────────
         box = layout.box()
         box.label(text="Face Aspect Ratio", icon="MESH_GRID")
@@ -435,7 +416,7 @@ class MeshCheckPreferences(AddonPreferences):
             "isolated_verts_color", "duplicate_verts_color", "poles_color", "zero_area_color",
             "flipped_normals_color", "z_fighting_color", "invalid_normals_color",
             "non_applied_transform_color", "scale_color", "origin_at_zero_color",
-            "modifier_stack_color", "smooth_by_angle_color",
+            "modifier_stack_color",
             "face_aspect_ratio_color",
             "symmetry_x_color", "symmetry_y_color", "symmetry_z_color",
             "uv_single_set_color",

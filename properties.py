@@ -14,8 +14,7 @@ CHECK_CATEGORIES = {
                    "face_aspect_ratio",
                    "triangles", "ngons", "poles",
                    "zero_area", "flipped_normals", "z_fighting", "invalid_normals"),
-    "TRANSFORMS": ("non_applied_transform", "scale", "origin_at_zero", "modifier_stack",
-                   "smooth_by_angle"),
+    "TRANSFORMS": ("non_applied_transform", "scale", "origin_at_zero", "modifier_stack"),
     "SYMMETRY":   ("symmetry_x", "symmetry_y", "symmetry_z"),
     "UV":         ("uv_single_set", "uv_overlap", "uv_micro_shell",
                    "uv_texel_density", "uv_stretch", "uv_padding",
@@ -41,7 +40,7 @@ _CHECK_LABELS: dict = {
     "col_naming":         "Group Name",
     "z_fighting":         "Z-Fighting",
     "face_aspect_ratio":  "Face Aspect Ratio",
-    "uv_material_udim":   "Mat per UDIM",
+    "uv_material_udim":   "Uv Material Udim",
     "mat_numbering":      "Mat Numbering",
 }
 
@@ -86,6 +85,21 @@ def mc_object_datas_updater(attr):
             MeshCheck.update_mc_object_datas(attr)
         return None
     return updater
+
+
+def update_flipped_normals(self, context):
+    """Toggle Blender's built-in Face Orientation overlay with the check."""
+    from .manager import MeshCheck
+    enabled = self.flipped_normals
+    if enabled:
+        MeshCheck.update_mc_object_datas('flipped_normals')
+    # Sync all VIEW_3D spaces
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space.overlay.show_face_orientation = enabled
 
 
 def update_obj_naming(self, context):
@@ -1577,7 +1591,7 @@ class MeshCheckProperties(PropertyGroup):
     ngons:               BoolProperty(name="Ngons",                   default=False, update=mc_object_datas_updater("ngons"))
     poles:               BoolProperty(name="Poles",                   default=False, update=mc_object_datas_updater("poles"))
     zero_area:           BoolProperty(name="Zero-area faces",         default=False, update=mc_object_datas_updater("zero_area"))
-    flipped_normals:     BoolProperty(name="Flipped normals",         default=False, update=mc_object_datas_updater("flipped_normals"))
+    flipped_normals:     BoolProperty(name="Flipped normals",         default=False, update=update_flipped_normals)
     z_fighting:          BoolProperty(name="Z-Fighting",              default=False, update=mc_object_datas_updater("z_fighting"),
                                       description="Coplanar face overlap within the mesh and between tracked objects")
     invalid_normals:      BoolProperty(name="Invalid Normals",        default=False, update=mc_object_datas_updater("invalid_normals"),
@@ -1590,8 +1604,6 @@ class MeshCheckProperties(PropertyGroup):
                                         description="Object pivot point is not at world origin (0, 0, 0)")
     modifier_stack:        BoolProperty(name="Modifier Stack",       default=False, update=mc_object_datas_updater("modifier_stack"),
                                         description="Unapplied modifiers present on object (pipeline non-whitelisted)")
-    smooth_by_angle:       BoolProperty(name="Smooth by Angle",      default=False, update=mc_object_datas_updater("smooth_by_angle"),
-                                        description="Smooth by Angle GN modifier: must be present with angle 180°")
 
     # SYMMETRY
     symmetry_x: BoolProperty(name="Symmetry X", default=False, update=mc_object_datas_updater("symmetry_x"))
@@ -1606,7 +1618,7 @@ class MeshCheckProperties(PropertyGroup):
     uv_stretch:       BoolProperty(name="UV Stretch",           default=False, update=mc_object_datas_updater("uv_stretch"))
     uv_padding:       BoolProperty(name="UV Padding",           default=False, update=mc_object_datas_updater("uv_padding"))
     uv_udim_bounds:   BoolProperty(name="UDIM Bounds",          default=False, update=mc_object_datas_updater("uv_udim_bounds"))
-    uv_material_udim: BoolProperty(name="Mat per UDIM",         default=False, update=mc_object_datas_updater("uv_material_udim"),
+    uv_material_udim: BoolProperty(name="Uv Material Udim",         default=False, update=mc_object_datas_updater("uv_material_udim"),
                                    description="Each UDIM tile must contain shells from one material only (регламент: 1 UDIM = 1 material group)")
 
     # NAMING

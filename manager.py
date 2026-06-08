@@ -38,6 +38,13 @@ class MeshCheckObject:
         'uv_stretch', 'uv_single_set', 'uv_udim_bounds',
     })
 
+    # Checks whose results depend on the object's world transform (location /
+    # rotation / scale), not on mesh topology or UV data.  They re-run whenever
+    # the transform key changes, independently of topo/UV flags.
+    _TRANSFORM_CHECKS = frozenset({
+        'origin_at_zero', 'non_applied_transform', 'scale',
+    })
+
     def __init__(self, obj):
         self._object = obj
         self._bm_object = None
@@ -45,6 +52,7 @@ class MeshCheckObject:
         self._checks = {name: cls(self) for name, cls in CHECK_TYPES.items()}
         self._mesh_key: tuple = ()   # (n_verts, n_edges, n_faces) — topology dirty flag
         self._uv_key:   tuple = ()   # sampled UV hash — UV-coords dirty flag
+        self._transform_key: tuple = ()  # (loc, rot, scale) — transform dirty flag
         self._mat_udim_map: dict = {}
         # Shared KD-tree for SymmetryX / SymmetryY / SymmetryZ (built once per topology change)
         self._sym_kd_key:   tuple = ()
@@ -52,10 +60,29 @@ class MeshCheckObject:
         self._sym_kd_co           = None   # numpy (n_verts, 3) float32, rebuilt per topology  # mat_name → set of (tile_u, tile_v)
         self._init_object()
 
+    @staticmethod
+    def _sample_transform_key(obj) -> tuple:
+        """Cheap transform dirty-detector: packs world position + local rot/scale.
+
+        World translation (matrix_world.translation) is used for the location
+        component so that moving a parent also triggers re-evaluation of child
+        objects (e.g. origin_at_zero on parented meshes).
+        Local rotation_euler and scale are kept as-is — their world equivalents
+        can be derived from matrix_world but these are sufficient for the
+        non_applied_transform / scale checks which only inspect local values.
+        """
+        loc = obj.matrix_world.translation   # world position of the origin
+        rot = obj.rotation_euler
+        scl = obj.scale
+        return (round(loc.x, 5), round(loc.y, 5), round(loc.z, 5),
+                round(rot.x, 5), round(rot.y, 5), round(rot.z, 5),
+                round(scl.x, 5), round(scl.y, 5), round(scl.z, 5))
+
     def _init_object(self):
         bm = self.set_bm_object()
-        self._mesh_key = (len(bm.verts), len(bm.edges), len(bm.faces))
-        self._uv_key   = self._sample_uv_key(bm)
+        self._mesh_key      = (len(bm.verts), len(bm.edges), len(bm.faces))
+        self._uv_key        = self._sample_uv_key(bm)
+        self._transform_key = self._sample_transform_key(self._object)
         self.update_datas(bm)
 
     @staticmethod
@@ -97,7 +124,8 @@ class MeshCheckObject:
             self._bm_object = bm
         return self._bm_object
 
-    def update_datas(self, bm, *, uv_changed: bool = True, topo_changed: bool = True):
+    def update_datas(self, bm, *, uv_changed: bool = True, topo_changed: bool = True,
+                     transform_changed: bool = True):
         mc = bpy.context.window_manager.mesh_check_props
 
         if topo_changed:
@@ -131,10 +159,13 @@ class MeshCheckObject:
         for name, checker in self._checks.items():
             if not getattr(mc, name, False):
                 continue
-            is_uv = name in self._UV_CHECKS
+            is_uv        = name in self._UV_CHECKS
+            is_transform = name in self._TRANSFORM_CHECKS
             if is_uv and not uv_changed:
                 continue
-            if not is_uv and not topo_changed:
+            if is_transform and not transform_changed:
+                continue
+            if not is_uv and not is_transform and not topo_changed:
                 continue
             try:
                 checker.set_datas()
@@ -157,8 +188,9 @@ class MeshCheckObject:
     def bm_object(self):
         if not self._bm_object or not self._bm_object.is_valid:
             bm = self.set_bm_object()
-            self._mesh_key = (len(bm.verts), len(bm.edges), len(bm.faces))
-            self._uv_key   = self._sample_uv_key(bm)
+            self._mesh_key      = (len(bm.verts), len(bm.edges), len(bm.faces))
+            self._uv_key        = self._sample_uv_key(bm)
+            self._transform_key = self._sample_transform_key(self._object)
             self.update_datas(bm)
         return self._bm_object
 
@@ -175,8 +207,9 @@ class MeshCheckGPU:
     _shader = None
     _batch_cache: dict = {}
 
-    _FACE_OVERLAY_CHECKS = {'flipped_normals', 'zero_area', 'triangles', 'ngons', 'uv_stretch',
-                            'invalid_normals'}
+    _FACE_OVERLAY_CHECKS = {'zero_area', 'triangles', 'ngons', 'uv_stretch',
+                            'invalid_normals', 'uv_material_udim'}
+    # flipped_normals excluded — uses Blender's built-in Face Orientation overlay
     _THICK_LINE_CHECKS   = {'non_applied_transform', 'scale',
                             'modifier_stack', 'origin_at_zero'}
 
@@ -289,11 +322,9 @@ class MeshCheckGPU:
                         if cached['face']:
                             shader.uniform_float("color", (*color[:3], prefs.faces_alpha))
                             gpu.state.blend_set("ALPHA")
-                            # LESS_EQUAL lets coplanar offset faces draw without z-fighting.
-                            gpu.state.depth_test_set('LESS_EQUAL')
+                            gpu.state.depth_test_set('NONE')
+                            gpu.state.face_culling_set('NONE')
                             cached['face'].draw(shader)
-                            if not ctx.space_data.shading.show_xray:
-                                gpu.state.depth_test_set('LESS')
 
                         if cached['edge']:
                             w = 4.0 if check in cls._THICK_LINE_CHECKS else prefs.edges_width
@@ -337,7 +368,8 @@ class UVCheckGPU:
     _handler = None
     _shader = None
     _batch_cache: dict = {}
-    _UV_OVERLAY_CHECKS = {'uv_overlap', 'uv_micro_shell', 'uv_udim_bounds', 'uv_padding'}
+    _UV_OVERLAY_CHECKS = {'uv_overlap', 'uv_micro_shell', 'uv_udim_bounds', 'uv_padding',
+                          'uv_stretch', 'uv_material_udim'}
 
     # Material→UDIM highlight state
     _mat_highlight_batch = None
@@ -845,6 +877,23 @@ class MeshCheck:
                     MeshCheck._scene_stale = (expected != len(MeshCheck.objects))
                 except Exception:
                     pass
+
+            # Transform dirty check — re-run origin/rotation/scale checks when
+            # the object's location/rotation/scale changes without topology change.
+            for o, mc_obj in MeshCheck.objects.items():
+                try:
+                    new_tk = MeshCheckObject._sample_transform_key(o)
+                    if new_tk != mc_obj._transform_key:
+                        mc_obj._transform_key = new_tk
+                        mc_obj.update_datas(
+                            mc_obj.bm_object,
+                            uv_changed=False,
+                            topo_changed=False,
+                            transform_changed=True,
+                        )
+                except Exception as e:
+                    print(f"[AssetChecker] transform dirty check {o.name}: {e}")
+
         elif m == "EDIT" and MeshCheck.poll():
             deps = ctx.evaluated_depsgraph_get()
             for o, mc_obj in MeshCheck.objects.items():

@@ -1,7 +1,12 @@
 # -*- coding:utf-8 -*-
 import bpy
-from .manager import MeshCheck as MC
+from . import manager as _manager_mod
 from .properties import CHECK_CATEGORIES
+
+
+def _MC():
+    """Always returns the current MeshCheck class — safe across hot-reloads."""
+    return _manager_mod.MeshCheck
 
 # ── Per-check severity ────────────────────────────────────────────────────────
 # BLOCKER  → any count > 0 contributes to CRITICAL status
@@ -29,7 +34,6 @@ CHECK_SEVERITY: dict = {
     "flipped_normals":       "WARNING",   # may be intentional (sky dome, double-sided)
     "invalid_normals":       "WARNING",   # custom normals issue
     "modifier_stack":        "WARNING",   # unapplied modifiers change exported geo
-    "smooth_by_angle":       "WARNING",   # Smooth by Angle modifier missing / misconfigured
     "uv_single_set":         "WARNING",   # extra UV layers
     "uv_micro_shell":        "WARNING",   # tiny UV islands
     "uv_stretch":            "WARNING",   # angle distortion visible on textures
@@ -77,7 +81,6 @@ CHECK_THRESHOLDS: dict = {
     "scale":                 0,
     "origin_at_zero":        0,
     "modifier_stack":        0,
-    "smooth_by_angle":       0,
     "symmetry_x":            0,
     "symmetry_y":            0,
     "symmetry_z":            0,
@@ -166,7 +169,7 @@ def get_category_status(mesh_check, category: str) -> str:
 
     total = sum(
         _get_check_count(mc_obj, check)
-        for mc_obj in MC.objects.values()
+        for mc_obj in _manager_mod.MeshCheck.objects.values()
         for check in active_checks
     )
 
@@ -192,7 +195,7 @@ def _compute_asset_summary(mc) -> dict:
         for check in checks:
             if not getattr(mc, check, False):
                 continue
-            total = sum(_get_check_count(mc_obj, check) for mc_obj in MC.objects.values())
+            total = sum(_get_check_count(mc_obj, check) for mc_obj in _manager_mod.MeshCheck.objects.values())
             if total == 0:
                 continue
             sev = CHECK_SEVERITY.get(check, "WARNING")
@@ -205,7 +208,7 @@ def _compute_asset_summary(mc) -> dict:
         total_warnings += cat_w
 
     return {
-        "obj_count":       len(MC.objects),
+        "obj_count":       len(_manager_mod.MeshCheck.objects),
         "total_blockers":  total_blockers,
         "total_warnings":  total_warnings,
         "total_issues":    total_blockers + total_warnings,
@@ -241,7 +244,7 @@ def _get_asset_status(mc) -> str:
     CRITICAL requires at least one BLOCKER check to have count > 0.
     WARNING checks (triangles, ngons, etc.) never escalate to CRITICAL.
     """
-    if not MC.objects:
+    if not _manager_mod.MeshCheck.objects:
         return "none"
 
     has_any_active = False
@@ -255,7 +258,7 @@ def _get_asset_status(mc) -> str:
             has_any_active = True
             total = sum(
                 _get_check_count(mc_obj, check)
-                for mc_obj in MC.objects.values()
+                for mc_obj in _manager_mod.MeshCheck.objects.values()
             )
             if total == 0:
                 continue
@@ -386,6 +389,34 @@ def draw_coordinator_panel(layout, mc, context) -> None:
         off_row.scale_y = 0.8
         off_row.prop(prefs, "faces_offset", text="Face Offset")
         off_row.prop(prefs, "points_offset", text="Point Offset")
+
+    # ── Export / Pre-flight / Checkpoint ─────────────────────────────────────
+    has_results = bool(_manager_mod.MeshCheck.objects)
+    cp_exists   = bool(context.scene.get(_AC_CHECKPOINT_KEY))
+
+    exp_box = layout.box()
+    exp_row = exp_box.row(align=True)
+    exp_row.label(text="Export:", icon="EXPORT")
+    exp_row.enabled = has_results
+    for fmt, lbl in (('JSON', 'JSON'), ('CSV', 'CSV'), ('HTML', 'HTML')):
+        op = exp_row.operator("asset_checker.export_report", text=lbl)
+        op.fmt = fmt
+
+    pf_row = exp_box.row(align=True)
+    pf_row.label(text="Pre-flight:", icon="CHECKMARK")
+    pf_row.enabled = has_results
+    op_fbx = pf_row.operator("asset_checker.preflight_export", text="FBX", icon="EXPORT")
+    op_fbx.fmt = 'FBX'
+    op_usd = pf_row.operator("asset_checker.preflight_export", text="USD", icon="EXPORT")
+    op_usd.fmt = 'USD'
+
+    cp_row = exp_box.row(align=True)
+    cp_row.label(text="Checkpoint:", icon="BOOKMARKS")
+    cp_row.operator("asset_checker.save_checkpoint",
+                    text="Update" if cp_exists else "Save", icon="FILE_TICK")
+    cp_row.operator("asset_checker.load_checkpoint", text="", icon="IMPORT")
+    if cp_exists:
+        cp_row.operator("asset_checker.clear_checkpoint", text="", icon="X", emboss=False)
 
 
 def draw_hierarchy_block(layout, mc):
@@ -544,7 +575,7 @@ def _draw_ignore_list_block(layout, mc) -> None:
 
     # Collect (name, obj, ignored_set) for all tracked objects that have ignores
     objects_with_ignores = []
-    for obj in list(MC.objects.keys()):
+    for obj in list(_manager_mod.MeshCheck.objects.keys()):
         try:
             name = obj.name
         except ReferenceError:
@@ -740,7 +771,7 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
     @staticmethod
     def _draw_score_block(layout, mc):
         """Compact asset summary: scope badge · obj count · issue count · per-category."""
-        if not MC.objects:
+        if not _manager_mod.MeshCheck.objects:
             layout.box().label(text="Awaiting suspects.", icon="GHOST_ENABLED")
             return
 
@@ -754,9 +785,9 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
             "none":     "RADIOBUT_OFF",
         }
 
-        scope = MC._scope
+        scope = _manager_mod.MeshCheck._scope
         if scope == "COLLECTION":
-            scope_label = MC._scope_collection or "COLLECTION"
+            scope_label = _manager_mod.MeshCheck._scope_collection or "COLLECTION"
         elif scope == "SCENE":
             scope_label = "SCENE"
         else:
@@ -858,18 +889,19 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
             row.label(text=label, icon=icon)
 
             if count > 0:
-                # Select-elements button (where applicable)
+                # Select button (left of ignore) — only where geometry is available
                 if hasattr(checker, 'get_select_data'):
                     element_type, _ = checker.get_select_data()
                     if element_type is not None:
                         op = row.operator(
                             "asset_checker.select_check_elements",
-                            text="", icon="RESTRICT_SELECT_OFF", emboss=False,
+                            text="", icon="EDITMODE_HLT", emboss=False,
                         )
                         op.obj_name   = obj.name
                         op.check_name = check
+                        row.separator(factor=0.5)
 
-                # Ignore button — only when there's an actual problem to suppress
+                # Ignore button
                 op = row.operator(
                     "asset_checker.toggle_ignore",
                     text="", icon="HIDE_ON", emboss=False,
@@ -917,7 +949,7 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
         all_results = []
         seen_cols: set = set()   # deduplicate collection issues across tracked objects
 
-        for mc_obj in MC.objects.values():
+        for mc_obj in _manager_mod.MeshCheck.objects.values():
             if mc.obj_naming:
                 checker = mc_obj._checks.get("obj_naming")
                 if checker and hasattr(checker, "results"):
@@ -962,6 +994,9 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
         layout = self.layout
         mc = context.window_manager.mesh_check_props
 
+        # Lazy import — avoids stale module-level reference after hot-reload
+
+
         addon_name = __name__.split(".")[0]
         try:
             prefs = context.preferences.addons[addon_name].preferences
@@ -995,14 +1030,14 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
             return
 
         # ── "Settings restored" hint ─────────────────────────────────────────
-        if MC._state_restored and not mc.show_overlay:
+        if _manager_mod.MeshCheck._state_restored and not mc.show_overlay:
             hint = layout.row()
             hint.scale_y = 0.75
             hint.label(text="  Settings restored — press Run to revalidate",
                        icon="RECOVER_LAST")
 
         # ── "Scene stale" hint ───────────────────────────────────────────────
-        if MC._scene_stale and mc.show_overlay:
+        if _manager_mod.MeshCheck._scene_stale and mc.show_overlay:
             stale = layout.row()
             stale.scale_y = 0.75
             stale.label(text="  Scene changed — re-run to include new objects",
@@ -1030,13 +1065,13 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
             off_row.prop(prefs, "faces_offset", text="Face Offset")
             off_row.prop(prefs, "points_offset", text="Point Offset")
 
-        if not MC.objects:
+        if not _manager_mod.MeshCheck.objects:
             return
 
         # ── Collapsible object-list section header ────────────────────────────
-        n_obj    = len(MC.objects)
+        n_obj    = len(_manager_mod.MeshCheck.objects)
         n_issues = 0
-        for _obj, _mc_obj in MC.objects.items():
+        for _obj, _mc_obj in _manager_mod.MeshCheck.objects.items():
             try:
                 _obj.name  # probe — raises ReferenceError if removed
             except ReferenceError:
@@ -1064,7 +1099,7 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
             errors_only = mc.obj_filter_errors_only
 
             visible = []
-            for obj, mc_obj in MC.objects.items():
+            for obj, mc_obj in _manager_mod.MeshCheck.objects.items():
                 try:
                     obj_name = obj.name
                 except ReferenceError:
@@ -1091,7 +1126,7 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
                 except ReferenceError:
                     return False
 
-            any_open = any(_stat(o) for o in MC.objects)
+            any_open = any(_stat(o) for o in _manager_mod.MeshCheck.objects)
             col_text = "Collapse All" if any_open else "Expand All"
             col_icon = "TRIA_RIGHT"   if any_open else "TRIA_DOWN"
             sec_box.operator("asset_checker.collapse_objects", text=col_text, icon=col_icon)
@@ -1147,50 +1182,33 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
         self._draw_asset_status(layout, mc)
 
         # ── Export / Pre-flight / Checkpoint ─────────────────────────────────
-        try:
-            exp_box = layout.box()
-            has_results = bool(MC.objects)
+        from .properties import _AC_CHECKPOINT_KEY
+        has_results = bool(_manager_mod.MeshCheck.objects)
+        cp_exists   = bool(context.scene.get(_AC_CHECKPOINT_KEY))
 
-            # Report export — only meaningful after validation
-            exp_row = exp_box.row(align=True)
-            exp_row.label(text="Export:", icon="EXPORT")
-            exp_row.enabled = has_results
-            for fmt, lbl in (('JSON', 'JSON'), ('CSV', 'CSV'), ('HTML', 'HTML')):
-                op = exp_row.operator("asset_checker.export_report", text=lbl)
-                op.fmt = fmt
+        exp_box = layout.box()
+        exp_row = exp_box.row(align=True)
+        exp_row.label(text="Export:", icon="EXPORT")
+        exp_row.enabled = has_results
+        for fmt, lbl in (('JSON', 'JSON'), ('CSV', 'CSV'), ('HTML', 'HTML')):
+            op = exp_row.operator("asset_checker.export_report", text=lbl)
+            op.fmt = fmt
 
-            # Pre-flight export — only meaningful after validation
-            pf_row = exp_box.row(align=True)
-            pf_row.label(text="Pre-flight:", icon="CHECKMARK")
-            pf_row.enabled = has_results
-            op_fbx = pf_row.operator("asset_checker.preflight_export",
-                                     text="FBX", icon="EXPORT")
-            op_fbx.fmt = 'FBX'
-            op_usd = pf_row.operator("asset_checker.preflight_export",
-                                     text="USD", icon="EXPORT")
-            op_usd.fmt = 'USD'
+        pf_row = exp_box.row(align=True)
+        pf_row.label(text="Pre-flight:", icon="CHECKMARK")
+        pf_row.enabled = has_results
+        op_fbx = pf_row.operator("asset_checker.preflight_export", text="FBX", icon="EXPORT")
+        op_fbx.fmt = 'FBX'
+        op_usd = pf_row.operator("asset_checker.preflight_export", text="USD", icon="EXPORT")
+        op_usd.fmt = 'USD'
 
-            # Checkpoint — always available
-            from .properties import _AC_CHECKPOINT_KEY
-            cp_exists = bool(context.scene.get(_AC_CHECKPOINT_KEY))
-            cp_row = exp_box.row(align=True)
-            cp_row.label(text="Checkpoint:", icon="BOOKMARKS")
-            cp_row.operator(
-                "asset_checker.save_checkpoint",
-                text="Update" if cp_exists else "Save",
-                icon="FILE_TICK",
-            )
-            cp_row.operator(
-                "asset_checker.load_checkpoint",
-                text="", icon="IMPORT",
-            )
-            if cp_exists:
-                cp_row.operator(
-                    "asset_checker.clear_checkpoint",
-                    text="", icon="X", emboss=False,
-                )
-        except Exception:
-            pass
+        cp_row = exp_box.row(align=True)
+        cp_row.label(text="Checkpoint:", icon="BOOKMARKS")
+        cp_row.operator("asset_checker.save_checkpoint",
+                        text="Update" if cp_exists else "Save", icon="FILE_TICK")
+        cp_row.operator("asset_checker.load_checkpoint", text="", icon="IMPORT")
+        if cp_exists:
+            cp_row.operator("asset_checker.clear_checkpoint", text="", icon="X", emboss=False)
 
 
 class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
@@ -1205,6 +1223,7 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
     _UV_CHECKS = (
         "uv_single_set", "uv_overlap", "uv_micro_shell",
         "uv_texel_density", "uv_stretch", "uv_padding", "uv_udim_bounds",
+        "uv_material_udim",
     )
 
     @classmethod
@@ -1214,6 +1233,8 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         mc = context.window_manager.mesh_check_props
+
+
 
         btn_text = "STUKACH ACTIVE" if mc.show_overlay else "RUN STUKACH"
         btn_icon = "RADIOBUT_ON"    if mc.show_overlay else "PLAY"
@@ -1277,14 +1298,14 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
             _total_world = 0.0
             if mc.uv_td_scope_active:
                 _active = context.object
-                _mc_o   = MC.objects.get(_active) if _active else None
+                _mc_o   = _manager_mod.MeshCheck.objects.get(_active) if _active else None
                 if _mc_o:
                     _ch = _mc_o._checks.get("uv_texel_density")
                     if _ch:
                         _total_uv    = getattr(_ch, '_uv_area',    0.0)
                         _total_world = getattr(_ch, '_world_area', 0.0)
             else:
-                for _mc_o in MC.objects.values():
+                for _mc_o in _manager_mod.MeshCheck.objects.values():
                     _ch = _mc_o._checks.get("uv_texel_density")
                     if _ch:
                         _total_uv    += getattr(_ch, '_uv_area',    0.0)
@@ -1404,14 +1425,14 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
                         _bd_icon = "ERROR" if _bt > 0 else "CHECKMARK"
                         r2.label(text=f"Border: {_mb:.2f}px", icon=_bd_icon)
 
-        if not MC.objects:
+        if not _manager_mod.MeshCheck.objects:
             layout.box().label(text="Awaiting suspects.", icon="GHOST_ENABLED")
             return
 
         # ── Collapsible object-list section ──────────────────────────────────
-        n_obj    = len(MC.objects)
+        n_obj    = len(_manager_mod.MeshCheck.objects)
         n_issues = sum(
-            1 for mc_obj in MC.objects.values()
+            1 for mc_obj in _manager_mod.MeshCheck.objects.values()
             if any(
                 getattr(mc, ch, False) and _get_check_count(mc_obj, ch) > 0
                 for ch in self._UV_CHECKS
@@ -1432,7 +1453,7 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
             cnt.label(text=str(n_issues), icon="ERROR")
 
         if mc.uv_obj_list_open:
-            for obj, mc_obj in MC.objects.items():
+            for obj, mc_obj in _manager_mod.MeshCheck.objects.items():
                 try:
                     obj_name = obj.name
                 except ReferenceError:
@@ -1477,7 +1498,7 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
         # ── Material → UDIM map ──────────────────────────────────────────────
         # Aggregate across all tracked objects
         _agg_mat_tiles: dict = {}
-        for _mc_o in MC.objects.values():
+        for _mc_o in _manager_mod.MeshCheck.objects.values():
             for _mat, _tiles in getattr(_mc_o, '_mat_udim_map', {}).items():
                 if _mat not in _agg_mat_tiles:
                     _agg_mat_tiles[_mat] = set()
