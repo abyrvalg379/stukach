@@ -1,0 +1,7 @@
+CLAUDE.md       export-ignore
+DOCS.md         export-ignore
+reload_addon.py export-ignore
+_gen_docx.py    export-ignore
+.gitignore      export-ignore
+.gitattributes  export-ignore
+.claude/        export-ignore
