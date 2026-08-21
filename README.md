@@ -6,16 +6,6 @@ Pipeline asset validation addon for Blender.
 
 ---
 
-## Screenshots
-
-![Topology](screenshots/prev_topology.jpg)
-![Transform](screenshots/prev_transform.jpg)
-![UV](screenshots/prev_uv.jpg)
-![Symmetry](screenshots/prev_symmetry.jpg)
-![Naming](screenshots/prev_naming.jpg)
-
----
-
 ## Installation
 
 **Option 1 — Drag & Drop:**
@@ -126,6 +116,16 @@ The **STUKACH** tab appears in the N-Panel (View3D and UV Editor).
 - **Checkpoints** — save and restore validation state
 - **Ignore System** — suppress individual checks per object
 - **Scene Units Check** — validates METRIC / METERS / scale 1.0
+
+---
+
+## Screenshots
+
+![Topology](screenshots/prev_topology.jpg)
+![Transform](screenshots/prev_transform.jpg)
+![UV](screenshots/prev_uv.jpg)
+![Symmetry](screenshots/prev_symmetry.jpg)
+![Naming](screenshots/prev_naming.jpg)
 
 ---
 
