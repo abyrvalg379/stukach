@@ -138,6 +138,12 @@ Access via Edit → Preferences → Extensions → STUKACH ⚙️
 
 ---
 
+## Report Issues
+
+Found a bug? [Open an issue](https://github.com/abyrvalg379/stukach/issues/new?template=bug_report.md)
+
+---
+
 ## License
 
 GPL-3.0-or-later
