@@ -1,5 +1,7 @@
 # STUKACH
 
+![STUKACH](screenshots/stukach_cover.png)
+
 Pipeline asset validation addon for Blender.
 
 **Blender 5.1+ · Author: Maksim Kovalev**
