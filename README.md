@@ -6,6 +6,16 @@ Pipeline asset validation addon for Blender.
 
 ---
 
+## Screenshots
+
+![Topology](screenshots/prev_topology.jpg)
+![Transform](screenshots/prev_transform.jpg)
+![UV](screenshots/prev_uv.jpg)
+![Symmetry](screenshots/prev_symmetry.jpg)
+![Naming](screenshots/prev_naming.jpg)
+
+---
+
 ## Installation
 
 **Option 1 — Drag & Drop:**
