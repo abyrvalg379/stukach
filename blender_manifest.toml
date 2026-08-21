@@ -3,15 +3,27 @@ schema_version = "1.0.0"
 id            = "stukach"
 version       = "1.3.0"
 name          = "STUKACH"
-tagline       = "Pipeline asset validation system"
-maintainer    = "Maksim Kovalev"
+tagline       = "Pipeline Snitch System — Asset validation for VFX production"
+maintainer    = "Maksim Kovalev <m.kovalev089@gmail.com>"
 type          = "add-on"
 
-blender_version_min = "4.2.0"
+blender_version_min = "5.1.0"
 
 license       = ["SPDX:GPL-3.0-or-later"]
+copyright     = ["2026 Maksim Kovalev"]
 
-tags          = ["Pipeline", "UV", "Mesh", "Object"]
+tags          = ["Pipeline", "UV", "Mesh", "Object", "Modeling"]
+
+description = """
+STUKACH (Pipeline Snitch System) is a comprehensive asset validation tool for Blender.
+It provides mesh quality checking, UV validation, naming conventions enforcement,
+transform validation, and pipeline integration features with checkpoint system.
+35 checkers across 7 categories: TOPOLOGY, TRANSFORMS, SYMMETRY, UV, NAMING, MATERIALS, CLEANUP.
+GPU overlays in 3D viewport and UV Editor. Coordinator mode for supervisors.
+"""
+
+[tools]
+blender = "5.1"
 
 [permissions]
-# No network, files outside addon dir, or clipboard access needed
+files = "Save/load checkpoints and export reports"

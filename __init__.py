@@ -5,18 +5,16 @@ import bpy
 from bpy.props import BoolProperty, PointerProperty
 
 if "bpy" in locals():
-    # Hot-reload: ensure submodules are in sys.modules, then reload in dependency order
-    import importlib, sys as _sys
-    from . import core, preferences, properties, ui, naming, manager
-    for _key, _mod in (
-        ("STUKACH.core", core), ("STUKACH.naming", naming),
-        ("STUKACH.preferences", preferences), ("STUKACH.properties", properties),
-        ("STUKACH.ui", ui), ("STUKACH.manager", manager),
-    ):
-        _sys.modules[_key] = _mod
-        importlib.reload(_mod)
-
-from . import preferences, properties, ui, naming
+    import importlib
+    from . import core, naming, preferences, properties, ui, manager
+    importlib.reload(core)
+    importlib.reload(naming)
+    importlib.reload(preferences)
+    importlib.reload(properties)
+    importlib.reload(ui)
+    importlib.reload(manager)
+else:
+    from . import core, naming, preferences, properties, ui, manager
 
 classes = (
     # NamingEntry must precede MeshCheckPreferences (CollectionProperty type dependency)

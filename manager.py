@@ -285,7 +285,7 @@ class MeshCheckGPU:
             gpu.state.depth_test_set('LESS')
 
         mc = ctx.window_manager.mesh_check_props
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs = ctx.preferences.addons[addon_name].preferences
         except Exception:
@@ -430,7 +430,7 @@ class UVCheckGPU:
         if not MeshCheck.objects:
             return
 
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs = ctx.preferences.addons[addon_name].preferences
         except Exception:
@@ -783,7 +783,7 @@ class MeshCheck:
         if not getattr(mc, 'uv_padding', False):
             return
         from .core import run_global_uv_padding, UVPaddingCheck
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs    = bpy.context.preferences.addons[addon_name].preferences
             tex_size = UVPaddingCheck._PAD_TEX_SIZES.get(

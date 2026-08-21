@@ -108,7 +108,7 @@ _PREFS_THRESHOLDS: frozenset = frozenset({'triangles', 'ngons', 'poles'})
 def _get_prefs():
     """Return MeshCheckPreferences or None."""
     import bpy
-    addon_name = __name__.split(".")[0]
+    addon_name = __name__.rsplit(".", 1)[0]
     try:
         return bpy.context.preferences.addons[addon_name].preferences
     except Exception:
@@ -126,7 +126,7 @@ def _get_threshold(check: str, prefs=None) -> int:
         p = prefs
         if p is None:
             try:
-                addon = __name__.split(".")[0]
+                addon = __name__.rsplit(".", 1)[0]
                 p = bpy.context.preferences.addons[addon].preferences
             except Exception:
                 p = None
@@ -826,7 +826,7 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
         from .properties import get_obj_ignore_list
 
         # Resolve prefs locally (static method has no access to outer draw() scope)
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs = bpy.context.preferences.addons[addon_name].preferences
         except Exception:
@@ -997,7 +997,7 @@ class ASSET_CHECKER_PT_Panel(bpy.types.Panel):
         # Lazy import — avoids stale module-level reference after hot-reload
 
 
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs = context.preferences.addons[addon_name].preferences
         except Exception:
@@ -1242,7 +1242,7 @@ class ASSET_CHECKER_PT_UV_Panel(bpy.types.Panel):
         row.scale_y = 1.3
         row.prop(mc, "show_overlay", text=btn_text, toggle=True, icon=btn_icon)
 
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs = context.preferences.addons[addon_name].preferences
         except Exception:

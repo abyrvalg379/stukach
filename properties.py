@@ -227,7 +227,7 @@ class ASSET_CHECKER_OT_set_td_target(bpy.types.Operator):
     td_value: FloatProperty(name="TD Value", default=10.24, min=0.0, max=500.0)
 
     def execute(self, context):
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             prefs = context.preferences.addons[addon_name].preferences
             prefs.uv_td_target = self.td_value
@@ -1752,7 +1752,7 @@ class MeshCheckProperties(PropertyGroup):
         """
         from .manager import MeshCheck
         from .ui import CHECK_SEVERITY  # lazy import to avoid circular
-        addon_name = __name__.split(".")[0]
+        addon_name = __name__.rsplit(".", 1)[0]
         try:
             addon_prefs = bpy.context.preferences.addons[addon_name].preferences
         except Exception:

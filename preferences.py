@@ -20,7 +20,7 @@ class ASSET_CHECKER_OT_naming_add_prefix(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         prefs.naming_prefixes.add()
         return {'FINISHED'}
 
@@ -34,7 +34,7 @@ class ASSET_CHECKER_OT_naming_remove_prefix(bpy.types.Operator):
     index: IntProperty()
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         if 0 <= self.index < len(prefs.naming_prefixes):
             prefs.naming_prefixes.remove(self.index)
         return {'FINISHED'}
@@ -47,7 +47,7 @@ class ASSET_CHECKER_OT_naming_add_suffix(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         prefs.naming_suffixes.add()
         return {'FINISHED'}
 
@@ -61,7 +61,7 @@ class ASSET_CHECKER_OT_naming_remove_suffix(bpy.types.Operator):
     index: IntProperty()
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         if 0 <= self.index < len(prefs.naming_suffixes):
             prefs.naming_suffixes.remove(self.index)
         return {'FINISHED'}
@@ -74,7 +74,7 @@ class ASSET_CHECKER_OT_col_naming_add_prefix(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         prefs.col_naming_prefixes.add()
         return {'FINISHED'}
 
@@ -88,7 +88,7 @@ class ASSET_CHECKER_OT_col_naming_remove_prefix(bpy.types.Operator):
     index: IntProperty()
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         if 0 <= self.index < len(prefs.col_naming_prefixes):
             prefs.col_naming_prefixes.remove(self.index)
         return {'FINISHED'}
@@ -101,7 +101,7 @@ class ASSET_CHECKER_OT_col_naming_add_suffix(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         prefs.col_naming_suffixes.add()
         return {'FINISHED'}
 
@@ -115,7 +115,7 @@ class ASSET_CHECKER_OT_col_naming_remove_suffix(bpy.types.Operator):
     index: IntProperty()
 
     def execute(self, context):
-        prefs = context.preferences.addons[__name__.split(".")[0]].preferences
+        prefs = context.preferences.addons[__name__.rsplit(".", 1)[0]].preferences
         if 0 <= self.index < len(prefs.col_naming_suffixes):
             prefs.col_naming_suffixes.remove(self.index)
         return {'FINISHED'}
@@ -138,7 +138,7 @@ def _uv_padding_settings_update(self, context):
 
 
 class MeshCheckPreferences(AddonPreferences):
-    bl_idname = __name__.split(".")[0]
+    bl_idname = __name__.rsplit(".", 1)[0]
 
     edges_width:   FloatProperty(name="Edges Width",  default=2.0,  min=1.0, max=10.0, subtype="PIXEL")
     faces_offset:  FloatProperty(name="Faces Offset", default=0.03, min=0.0, max=5.0,  precision=3)
